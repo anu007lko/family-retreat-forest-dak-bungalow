@@ -159,39 +159,53 @@ document.querySelectorAll('a[href^="#"]').forEach(anchor => {
   });
 });
 
-// ─── Enquiry Form Handling ────────────────────────────────
-const form        = document.getElementById('inquiry-form');
-const formSuccess = document.getElementById('form-success');
-const submitBtn   = document.getElementById('form-submit-btn');
+// ─── Enquiry Form Handling (FormSubmit AJAX) ─────────────
+const form          = document.getElementById('inquiry-form');
+const formSuccess   = document.getElementById('form-success');
+const formError     = document.getElementById('form-error');
+const submitBtn     = document.getElementById('form-submit-btn');
+const fallbackBtn   = document.getElementById('whatsapp-fallback-btn');
+
+// Web3Forms endpoint — works from localhost, Vercel, and any origin, no activation needed
+const W3F_ENDPOINT   = 'https://api.web3forms.com/submit';
+const WHATSAPP_NUMBER = '919307509511';
 
 function validateForm(formEl) {
   let valid = true;
-  const requiredFields = formEl.querySelectorAll('[required]');
-  requiredFields.forEach(field => {
+  formEl.querySelectorAll('[required]').forEach(field => {
+    field.classList.remove('field-error');
     if (!field.value.trim()) {
       valid = false;
       field.classList.add('field-error');
-    } else {
-      field.classList.remove('field-error');
     }
   });
-
-  // Email format
   const emailField = formEl.querySelector('#guest-email');
-  if (emailField && emailField.value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailField.value)) {
+  if (emailField?.value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailField.value)) {
     valid = false;
     emailField.classList.add('field-error');
   }
-
-  // Date logic
   const checkin  = formEl.querySelector('#checkin-date')?.value;
   const checkout = formEl.querySelector('#checkout-date')?.value;
   if (checkin && checkout && new Date(checkout) <= new Date(checkin)) {
     valid = false;
     formEl.querySelector('#checkout-date')?.classList.add('field-error');
   }
-
   return valid;
+}
+
+function buildWhatsAppMessage(data) {
+  const lines = [
+    'Hello, I would like to enquire about booking The Forest Dak Bungalow at Malla Ramgarh.',
+    '',
+    `Name: ${data.name}`,
+    `Email: ${data.email}`,
+    `Phone: ${data.phone || 'Not provided'}`,
+    `Check-in: ${data.checkin}`,
+    `Check-out: ${data.checkout}`,
+    `Adults: ${data.adults || 'Not specified'}`,
+    `Special Requests: ${data.message || 'None'}`,
+  ];
+  return encodeURIComponent(lines.join('\n'));
 }
 
 form?.addEventListener('submit', async (e) => {
@@ -201,11 +215,56 @@ form?.addEventListener('submit', async (e) => {
   submitBtn.disabled = true;
   submitBtn.textContent = 'Sending…';
 
-  // Simulate async submission (replace with real endpoint)
-  await new Promise(resolve => setTimeout(resolve, 1500));
+  // Collect form data
+  const formData = new FormData(form);
+  const data = {
+    name:     form.querySelector('#guest-name')?.value || '',
+    email:    form.querySelector('#guest-email')?.value || '',
+    phone:    form.querySelector('#guest-phone')?.value || '',
+    checkin:  form.querySelector('#checkin-date')?.value || '',
+    checkout: form.querySelector('#checkout-date')?.value || '',
+    adults:   form.querySelector('#guest-count')?.value || '',
+    message:  form.querySelector('#guest-message')?.value || '',
+  };
 
-  form.setAttribute('hidden', '');
-  formSuccess.removeAttribute('hidden');
+  // Pre-build the WhatsApp fallback URL
+  const waMsg = buildWhatsAppMessage(data);
+  const waUrl = `https://wa.me/${WHATSAPP_NUMBER}?text=${waMsg}`;
+  if (fallbackBtn) fallbackBtn.href = waUrl;
+  const successWaBtn = document.getElementById('success-whatsapp-btn');
+  if (successWaBtn) successWaBtn.href = waUrl;
+
+  try {
+    const res = await fetch(W3F_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({
+        access_key:  document.getElementById('w3f-access-key')?.value,
+        subject:     'New Booking Enquiry – The Forest Dak Bungalow',
+        from_name:   'Family Retreat Website',
+        'Guest Name':     data.name,
+        'Email':          data.email,
+        'Phone Number':   data.phone || 'Not provided',
+        'Check-in Date':  data.checkin,
+        'Check-out Date': data.checkout,
+        'Number of Adults': data.adults || 'Not specified',
+        'Special Requests': data.message || 'None',
+      }),
+    });
+    const json = await res.json();
+    if (res.ok && json.success === true) {
+      form.setAttribute('hidden', '');
+      formSuccess.removeAttribute('hidden');
+    } else {
+      throw new Error('FormSubmit returned failure');
+    }
+  } catch {
+    // Email failed — show WhatsApp fallback
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Send Enquiry';
+    form.setAttribute('hidden', '');
+    formError.removeAttribute('hidden');
+  }
 });
 
 // Remove error class on input
